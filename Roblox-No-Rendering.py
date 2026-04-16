@@ -1,48 +1,150 @@
-import time
+import tkinter as tk
 import win32gui
 import win32con
 
-seen_windows = set()
-IGNORE_HWND = None  # put a hwnd here if you want to ignore a specific one
+TARGET_TITLE = "Roblox"
 
-def window_callback(hwnd, _):
-    global seen_windows
 
-    title = win32gui.GetWindowText(hwnd)
+class WindowManagerApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Roblox Window Manager (Optimized)")
+        self.root.geometry("400x500")
 
-    if title == "Roblox" and win32gui.IsWindowVisible(hwnd):
+        self.windows = {}  # hwnd -> UI frame
+        self.cached_hwnds = set()
 
-        # Ignore specific window if set
-        if hwnd == IGNORE_HWND:
-            return
+        self.auto_hide_new = tk.BooleanVar(value=False)
+        self.auto_refresh = tk.BooleanVar(value=False)
 
-        # If we've already seen this window, skip it
-        if hwnd in seen_windows:
-            return
+        # ---------------- Top controls ----------------
+        top = tk.Frame(root)
+        top.pack(fill="x")
 
-        # Mark as seen (so existing ones won't be touched again)
-        seen_windows.add(hwnd)
+        tk.Checkbutton(
+            top,
+            text="Auto-hide new clients",
+            variable=self.auto_hide_new
+        ).pack(side="left")
 
-        win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
-        win32gui.PostMessage(
-            hwnd,
-            win32con.WM_SYSCOMMAND,
-            win32con.SC_MINIMIZE,
-            0
+        tk.Checkbutton(
+            top,
+            text="Auto-refresh",
+            variable=self.auto_refresh
+        ).pack(side="left")
+
+        tk.Button(top, text="Refresh", command=self.refresh_windows).pack(side="right")
+        tk.Button(top, text="Hide All", command=self.hide_all).pack(side="right")
+        tk.Button(top, text="Show All", command=self.show_all).pack(side="right")
+
+        # ---------------- List ----------------
+        self.list_frame = tk.Frame(root)
+        self.list_frame.pack(fill="both", expand=True)
+
+        # Start lightweight loop (ONLY if auto-refresh is enabled)
+        self.light_loop()
+
+    # ---------------- Window scan ----------------
+
+    def enum_windows(self):
+        result = set()
+
+        def callback(hwnd, _):
+            if win32gui.IsWindow(hwnd):
+                title = win32gui.GetWindowText(hwnd)
+                if title == TARGET_TITLE:
+                    result.add(hwnd)
+
+        win32gui.EnumWindows(callback, None)
+        return result
+
+    # ---------------- Window actions ----------------
+
+    def hide_window(self, hwnd):
+        try:
+            win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
+        except:
+            pass
+
+    def show_window(self, hwnd):
+        try:
+            win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+        except:
+            pass
+
+    def toggle_window(self, hwnd):
+        try:
+            if win32gui.IsWindowVisible(hwnd):
+                self.hide_window(hwnd)
+            else:
+                self.show_window(hwnd)
+        except:
+            pass
+
+    def hide_all(self):
+        for hwnd in list(self.windows.keys()):
+            self.hide_window(hwnd)
+
+    def show_all(self):
+        for hwnd in list(self.windows.keys()):
+            self.show_window(hwnd)
+
+    # ---------------- UI handling ----------------
+
+    def add_window(self, hwnd):
+        frame = tk.Frame(self.list_frame, pady=2)
+        frame.pack(fill="x")
+
+        label = tk.Label(frame, text=f"Roblox HWND: {hwnd}")
+        label.pack(side="left")
+
+        btn = tk.Button(
+            frame,
+            text="Toggle",
+            command=lambda h=hwnd: self.toggle_window(h)
         )
-        print(f"Found NEW Roblox window {hwnd}")
+        btn.pack(side="right")
 
-print("Only NEW Roblox windows will be hidden.")
+        self.windows[hwnd] = frame
 
-# First pass: collect already open windows so they are ignored
-def init_callback(hwnd, _):
-    title = win32gui.GetWindowText(hwnd)
-    if title == "Roblox" and win32gui.IsWindowVisible(hwnd):
-        seen_windows.add(hwnd)
+        # auto-hide new clients
+        if self.auto_hide_new.get():
+            self.hide_window(hwnd)
 
-win32gui.EnumWindows(init_callback, None)
+    def remove_window(self, hwnd):
+        frame = self.windows.pop(hwnd, None)
+        if frame:
+            frame.destroy()
 
-# Main loop
-while True:
-    win32gui.EnumWindows(window_callback, None)
-    time.sleep(0.001)
+    # ---------------- Core optimized refresh ----------------
+
+    def refresh_windows(self):
+        current_hwnds = self.enum_windows()
+
+        # ONLY update differences (not full rebuild every time)
+        new_hwnds = current_hwnds - self.cached_hwnds
+        removed_hwnds = self.cached_hwnds - current_hwnds
+
+        for hwnd in new_hwnds:
+            self.add_window(hwnd)
+
+        for hwnd in removed_hwnds:
+            self.remove_window(hwnd)
+
+        self.cached_hwnds = current_hwnds
+
+    # ---------------- Lightweight loop ----------------
+
+    def light_loop(self):
+        # Only run auto-refresh if user enabled it
+        if self.auto_refresh.get():
+            self.refresh_windows()
+
+        # MUCH slower loop = no lag
+        self.root.after(3000, self.light_loop)  # every 3 seconds
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = WindowManagerApp(root)
+    root.mainloop()
